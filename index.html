@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analisador PRO+</title>
+
+<style>
+body { font-family: Arial; background:#0f172a; color:#fff; padding:15px; }
+input, textarea { width:100%; margin-top:10px; padding:12px; border-radius:10px; border:none; }
+textarea { height:120px; }
+
+.card { background:#1e293b; padding:15px; border-radius:12px; margin-top:15px; }
+
+button {
+    margin-top:10px;
+    padding:12px;
+    border:none;
+    border-radius:10px;
+    width:100%;
+    background:#22c55e;
+    color:white;
+    font-weight:bold;
+}
+
+.item {
+    background:#334155;
+    padding:10px;
+    border-radius:10px;
+    margin-top:10px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>🚀 Analisador PRO+</h2>
+
+<input id="aparelho" placeholder="Modelo do aparelho">
+
+<input type="file" accept=".txt,.ips,.panic" onchange="carregarArquivo(event)">
+
+<textarea id="log" placeholder="Cole ou importe o panic log..."></textarea>
+
+<button onclick="salvar()">💾 Salvar Atendimento</button>
+
+<div class="card" id="resultado"></div>
+<div class="card" id="historico"></div>
+
+<script>
+
+function carregarArquivo(event) {
+    const arquivo = event.target.files[0];
+    const leitor = new FileReader();
+
+    leitor.onload = function(e) {
+        document.getElementById("log").value = e.target.result;
+        analisar();
+    };
+
+    leitor.readAsText(arquivo);
+}
+
+document.getElementById("log").addEventListener("input", analisar);
+
+let ultimoDiagnostico = "";
+
+function analisar() {
+    let log = document.getElementById("log").value.toLowerCase();
+
+    let resultado = "INDEFINIDO";
+
+    if (log.includes("baseband")) resultado = "BASEBAND";
+    else if (log.includes("sensor")) resultado = "SENSOR";
+    else if (log.includes("thermal")) resultado = "TÉRMICO";
+    else if (log.includes("pmic")) resultado = "ENERGIA";
+    else if (log.includes("nand")) resultado = "NAND";
+    else if (log.includes("cpu")) resultado = "CPU";
+    else if (log.includes("watchdog")) resultado = "SISTEMA";
+
+    ultimoDiagnostico = resultado;
+
+    document.getElementById("resultado").innerHTML =
+        `<b>Diagnóstico:</b> ${resultado}`;
+}
+
+function salvar() {
+    let aparelho = document.getElementById("aparelho").value;
+
+    let registro = {
+        aparelho,
+        diagnostico: ultimoDiagnostico,
+        data: new Date().toLocaleString()
+    };
+
+    let banco = JSON.parse(localStorage.getItem("db")) || [];
+    banco.push(registro);
+
+    localStorage.setItem("db", JSON.stringify(banco));
+
+    alert("Salvo com sucesso!");
+    carregarHistorico();
+}
+
+function carregarHistorico() {
+    let banco = JSON.parse(localStorage.getItem("db")) || [];
+    let html = "<b>📜 Histórico:</b>";
+
+    banco.reverse().forEach((item, index) => {
+        html += `
+        <div class="item">
+            <b>${item.aparelho}</b><br>
+            ${item.diagnostico}<br>
+            <small>${item.data}</small><br>
+            <button onclick="excluir(${index})">Excluir</button>
+        </div>`;
+    });
+
+    document.getElementById("historico").innerHTML = html;
+}
+
+function excluir(index) {
+    let banco = JSON.parse(localStorage.getItem("db")) || [];
+    banco.splice(index, 1);
+    localStorage.setItem("db", JSON.stringify(banco));
+    carregarHistorico();
+}
+
+carregarHistorico();
+
+</script>
+
+</body>
+</html>
