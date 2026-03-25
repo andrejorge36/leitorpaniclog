@@ -1,132 +1,245 @@
-
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-br">
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Analisador PRO+</title>
+<meta charset="UTF-8">
+<title>Panic Analyzer AI ULTRA</title>
 
 <style>
-body { font-family: Arial; background:#0f172a; color:#fff; padding:15px; }
-input, textarea { width:100%; margin-top:10px; padding:12px; border-radius:10px; border:none; }
-textarea { height:120px; }
-
-.card { background:#1e293b; padding:15px; border-radius:12px; margin-top:15px; }
-
-button {
-    margin-top:10px;
-    padding:12px;
-    border:none;
-    border-radius:10px;
-    width:100%;
-    background:#22c55e;
-    color:white;
-    font-weight:bold;
-}
-
-.item {
-    background:#334155;
-    padding:10px;
-    border-radius:10px;
-    margin-top:10px;
-}
+body { font-family: Arial; background:#0d0d0d; color:#eee; padding:15px; }
+h1 { color:#00ffcc; }
+textarea { width:100%; height:120px; }
+button { padding:10px; margin-top:8px; width:100%; }
+#resultado, #dashboard { margin-top:15px; background:#1a1a1a; padding:10px; }
+.item { border-bottom:1px solid #333; padding:5px; }
 </style>
 </head>
 
 <body>
 
-<h2>🚀 Analisador PRO+</h2>
+<h1>🧠 Panic Analyzer AI ULTRA</h1>
 
-<input id="aparelho" placeholder="Modelo do aparelho">
+<input type="file" onchange="carregarArquivo(event)">
+<textarea id="log" placeholder="Cole ou carregue panic log (.ips)"></textarea>
 
-<input type="file" accept=".txt,.ips,.panic" onchange="carregarArquivo(event)">
+<button onclick="analisar()">Analisar</button>
+<button onclick="salvarHistorico()">Salvar Histórico</button>
+<button onclick="aprender()">Ensinar IA</button>
 
-<textarea id="log" placeholder="Cole ou importe o panic log..."></textarea>
+<div id="resultado"></div>
 
-<button onclick="salvar()">💾 Salvar Atendimento</button>
+<h3>📊 Dashboard</h3>
+<div id="dashboard"></div>
 
-<div class="card" id="resultado"></div>
-<div class="card" id="historico"></div>
+<h3>📚 Histórico</h3>
+<div id="historico"></div>
 
 <script>
 
-function carregarArquivo(event) {
-    const arquivo = event.target.files[0];
-    const leitor = new FileReader();
+// ================= BASE =================
+let bancoIA = JSON.parse(localStorage.getItem("bancoIA") || "[]");
+let historico = JSON.parse(localStorage.getItem("historico") || "[]");
 
-    leitor.onload = function(e) {
-        document.getElementById("log").value = e.target.result;
+// ================= CARREGAR .IPS =================
+function carregarArquivo(e){
+    let file = e.target.files[0];
+    let reader = new FileReader();
+
+    reader.onload = function(ev){
+        let texto = ev.target.result;
+
+        try {
+            let json = JSON.parse(texto);
+            texto = JSON.stringify(json, null, 2);
+        } catch {}
+
+        document.getElementById("log").value = texto;
         analisar();
     };
 
-    leitor.readAsText(arquivo);
+    reader.readAsText(file);
 }
 
-document.getElementById("log").addEventListener("input", analisar);
+// ================= ANALISADOR =================
+function analisar(){
 
-let ultimoDiagnostico = "";
-
-function analisar() {
     let log = document.getElementById("log").value.toLowerCase();
+    let resultado = [];
+    let prioridade = [];
 
-    let resultado = "INDEFINIDO";
+    function add(tipo, msg, ci, score){
+        resultado.push({tipo, msg, ci, score});
+    }
 
-    if (log.includes("baseband")) resultado = "BASEBAND";
-    else if (log.includes("sensor")) resultado = "SENSOR";
-    else if (log.includes("thermal")) resultado = "TÉRMICO";
-    else if (log.includes("pmic")) resultado = "ENERGIA";
-    else if (log.includes("nand")) resultado = "NAND";
-    else if (log.includes("cpu")) resultado = "CPU";
-    else if (log.includes("watchdog")) resultado = "SISTEMA";
+    function addPrioridade(nome, motivo){
+        prioridade.push({nome, motivo});
+    }
 
-    ultimoDiagnostico = resultado;
+    // ===== HARDWARE PRINCIPAL =====
+    if(log.includes("baseband"))
+        add("BASEBAND","Falha modem","PMU_RF / CPU",95);
 
-    document.getElementById("resultado").innerHTML =
-        `<b>Diagnóstico:</b> ${resultado}`;
+    if(log.includes("nand") || log.includes("nvme"))
+        add("MEMÓRIA","Erro NAND/NVMe","NAND",96);
+
+    if(log.includes("panic(cpu"))
+        add("CPU","Falha processador","SoC",97);
+
+    if(log.includes("pmic") || log.includes("pmgr") || log.includes("vdd"))
+        add("ENERGIA","Falha alimentação","PMIC",93);
+
+    if(log.includes("thermal"))
+        add("TÉRMICO","Erro sensor temperatura","NTC",90);
+
+    // ===== NOVOS SISTEMAS (iPhones recentes) =====
+    if(log.includes("amcc"))
+        add("STORAGE","Controlador armazenamento","NAND CTRL",96);
+
+    if(log.includes("sep"))
+        add("CRÍTICO","Secure Enclave","CPU",97);
+
+    if(log.includes("ane"))
+        add("CPU","Neural Engine","SoC",90);
+
+    if(log.includes("smc"))
+        add("CONTROLE","Erro SMC","Sistema",92);
+
+    if(log.includes("wifi") || log.includes("bluetooth"))
+        add("RF","Falha WiFi/Bluetooth","WiFi IC",89);
+
+    // ===== PERIFÉRICOS =====
+    if(log.includes("i2c") || log.includes("spi")){
+        add("PERIFÉRICO","Falha barramento","Linha I2C/SPI",92);
+        addPrioridade("Remover periféricos externos","Possível curto em linha");
+    }
+
+    if(log.includes("missing sensor") || log.includes("proximity")){
+        add("PERIFÉRICO","Sensor não detectado","Flex frontal",93);
+        addPrioridade("Desconectar câmera frontal","Erro sensor");
+    }
+
+    if(log.includes("camera")){
+        add("PERIFÉRICO","Falha câmera","Módulo câmera",91);
+        addPrioridade("Remover câmera traseira","Teste rápido");
+    }
+
+    if(log.includes("audio") || log.includes("mic")){
+        add("PERIFÉRICO","Falha áudio","Audio IC / mic",89);
+        addPrioridade("Testar sem dock","Possível curto áudio");
+    }
+
+    if(log.includes("lightning") || log.includes("usb")){
+        add("PERIFÉRICO","Falha dock","Conector carga",90);
+        addPrioridade("Desconectar dock","Teste linha USB");
+    }
+
+    // ===== CORRELAÇÕES =====
+    if(log.includes("watchdog") && log.includes("i2c")){
+        add("CRÍTICO","Periférico travando sistema","Sensor/dock/câmera",99);
+    }
+
+    if(log.includes("baseband") && log.includes("no service")){
+        add("RF CRÍTICO","Sem sinal","PMU_RF",98);
+    }
+
+    // ===== IA APRENDIZADO =====
+    bancoIA.forEach(item=>{
+        if(log.includes(item.chave)){
+            add("IA", item.problema, item.ci, 99);
+        }
+    });
+
+    // ===== RESULTADO =====
+    if(resultado.length === 0){
+        document.getElementById("resultado").innerHTML = "❓ Nenhum diagnóstico";
+        return;
+    }
+
+    let html = "<h3>🔍 Diagnóstico:</h3>";
+
+    resultado.forEach(r=>{
+        html += `
+        🔹 ${r.tipo}<br>
+        ⚠️ ${r.msg}<br>
+        🔧 ${r.ci}<br>
+        📊 ${r.score}%<br><br>`;
+    });
+
+    if(prioridade.length > 0){
+        html += "<h3>🛠️ Ordem de teste:</h3>";
+        prioridade.forEach(p=>{
+            html += `➡️ ${p.nome}<br><small>${p.motivo}</small><br><br>`;
+        });
+    }
+
+    document.getElementById("resultado").innerHTML = html;
 }
 
-function salvar() {
-    let aparelho = document.getElementById("aparelho").value;
+// ================= IA =================
+function aprender(){
+    let chave = prompt("Palavra do log:");
+    let problema = prompt("Defeito:");
+    let ci = prompt("CI resolvido:");
 
-    let registro = {
-        aparelho,
-        diagnostico: ultimoDiagnostico,
-        data: new Date().toLocaleString()
-    };
+    bancoIA.push({chave, problema, ci});
+    localStorage.setItem("bancoIA", JSON.stringify(bancoIA));
 
-    let banco = JSON.parse(localStorage.getItem("db")) || [];
-    banco.push(registro);
+    alert("IA atualizada 🔥");
+}
 
-    localStorage.setItem("db", JSON.stringify(banco));
+// ================= HISTÓRICO =================
+function salvarHistorico(){
+    let log = document.getElementById("log").value;
 
-    alert("Salvo com sucesso!");
+    historico.push({
+        data: new Date().toLocaleString(),
+        log
+    });
+
+    localStorage.setItem("historico", JSON.stringify(historico));
+
     carregarHistorico();
+    dashboard();
 }
 
-function carregarHistorico() {
-    let banco = JSON.parse(localStorage.getItem("db")) || [];
-    let html = "<b>📜 Histórico:</b>";
-
-    banco.reverse().forEach((item, index) => {
+function carregarHistorico(){
+    let html = "";
+    historico.slice().reverse().forEach(item=>{
         html += `
         <div class="item">
-            <b>${item.aparelho}</b><br>
-            ${item.diagnostico}<br>
-            <small>${item.data}</small><br>
-            <button onclick="excluir(${index})">Excluir</button>
+        🕒 ${item.data}<br>
+        📄 ${item.log.substring(0,80)}...
         </div>`;
     });
 
     document.getElementById("historico").innerHTML = html;
 }
 
-function excluir(index) {
-    let banco = JSON.parse(localStorage.getItem("db")) || [];
-    banco.splice(index, 1);
-    localStorage.setItem("db", JSON.stringify(banco));
-    carregarHistorico();
+// ================= DASHBOARD =================
+function dashboard(){
+    let stats = {
+        baseband:0, nand:0, cpu:0, periferico:0
+    };
+
+    historico.forEach(h=>{
+        let l = h.log.toLowerCase();
+
+        if(l.includes("baseband")) stats.baseband++;
+        if(l.includes("nand")) stats.nand++;
+        if(l.includes("panic(cpu")) stats.cpu++;
+        if(l.includes("i2c")) stats.periferico++;
+    });
+
+    document.getElementById("dashboard").innerHTML = `
+    📡 Baseband: ${stats.baseband}<br>
+    💾 NAND: ${stats.nand}<br>
+    🧠 CPU: ${stats.cpu}<br>
+    🔌 Periféricos: ${stats.periferico}<br>
+    📊 Total: ${historico.length}`;
 }
 
+// INIT
 carregarHistorico();
+dashboard();
 
 </script>
 
