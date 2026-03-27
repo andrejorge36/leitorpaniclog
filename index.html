@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisador de Panic Log Pro - André</title>
+    <style>
+        :root { --primary: #0071e3; --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --danger: #ff3b30; --success: #34c759; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { max-width: 900px; width: 100%; background: var(--card); padding: 30px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        h1 { text-align: center; font-size: 22px; margin-bottom: 5px; }
+        p.subtitle { text-align: center; color: #888; margin-bottom: 25px; font-size: 14px; }
+        
+        .input-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        #drop-zone { border: 2px dashed #ccc; border-radius: 12px; padding: 20px; text-align: center; cursor: pointer; transition: 0.3s; display: flex; align-items: center; justify-content: center; min-height: 100px; }
+        #drop-zone:hover { border-color: var(--primary); background: #f0f7ff; }
+        
+        textarea { width: 100%; height: 100px; border-radius: 12px; border: 1px solid #ccc; padding: 10px; font-family: monospace; font-size: 12px; resize: none; box-sizing: border-box; }
+        .btn-analyze { width: 100%; background: var(--primary); color: white; border: none; padding: 12px; border-radius: 12px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+
+        #result { margin-top: 20px; padding: 20px; border-radius: 12px; background: #fff9f9; border: 1px solid #ffebeb; display: none; }
+        .res-item { border-bottom: 1px solid #eee; padding: 10px 0; }
+        .res-item:last-child { border: none; }
+
+        .history-section { margin-top: 40px; width: 100%; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; font-size: 13px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f2f2f2; color: #555; }
+        .btn-clear { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 12px; text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Leitor de Panic Full</h1>
+    <p class="subtitle">Suporte: iPhone 11 ao iPhone 17</p>
+    
+    <div class="input-methods">
+        <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+            <span>📁 Arraste ou Selecione o Arquivo (.ips/.txt)</span>
+            <input type="file" id="file-input" hidden accept="*/*">
+        </div>
+        <div>
+            <textarea id="text-input" placeholder="Ou cole o texto do log aqui..."></textarea>
+            <button class="btn-analyze" onclick="analyzeFromText()">Analisar Texto Copiado</button>
+        </div>
+    </div>
+
+    <div id="result">
+        <div id="diag-content"></div>
+    </div>
+
+    <div class="history-section">
+        <div style="display:flex; justify-content:space-between; align-items:center">
+            <h2>Histórico de Diagnósticos</h2>
+            <button class="btn-clear" onclick="clearHistory()">Limpar Banco de Dados</button>
+        </div>
+        <table id="history-table">
+            <thead>
+                <tr>
+                    <th>Data</th>
+                    <th>Modelo</th>
+                    <th>Falha Provável</th>
+                    <th>Código</th>
+                </tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // Banco de dados atualizado com base nos links do Repair Wiki
+    const errorDB = [
+        { key: "Prs0", comp: "Flex de Carga (Porta de Carga)", detail: "Sensor Barométrico não detectado. Comum em iPhones que molharam ou flex paralelo." },
+        { key: "Mic1", comp: "Flex de Carga (Dock)", detail: "Microfone Inferior (Conversação) falhando ou desconectado." },
+        { key: "Mic2", comp: "Flex Power / Flash / Mic Superior", detail: "Microfone traseiro falhando. Comum após troca de carcaça ou vidro traseiro." },
+        { key: "Mic3", comp: "Flex de Volume / Proximidade", detail: "Microfone periférico detectado com erro. Verifique os flex laterais." },
+        { key: "TG0B", comp: "Bateria / Linha SWI", detail: "Falha de comunicação de dados da bateria. Verifique o conector FPC ou o chip BMS." },
+        { key: "TG0V", comp: "Bateria / Voltagem", detail: "Erro na telemetria de voltagem da bateria." },
+        { key: "Eiger", comp: "Componente do Flex de Carga", detail: "Falha detectada no barramento do Dock (iPhone 12 ao 14)." },
+        { key: "Thermalmonitor", comp: "Sensor Térmico", detail: "Aparelho reiniciando por proteção térmica. Pode ser sensor no Dock ou no Flex Power." },
+        { key: "Camera Control", comp: "Botão de Captura (iP16/17)", detail: "Erro no sensor de pressão do novo botão lateral." }
+    ];
+
+    window.onload = displayHistory;
+
+    // Leitura de Arquivo
+    document.getElementById('file-input').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => processLog(ev.target.result);
+        reader.readAsText(file);
+    };
+
+    // Leitura de Texto Copiado
+    function analyzeFromText() {
+        const text = document.getElementById('text-input').value;
+        if (!text) return alert("Cole o texto do log antes!");
+        processLog(text);
+    }
+
+    function processLog(text) {
+        const resultDiv = document.getElementById('result');
+        const contentDiv = document.getElementById('diag-content');
+        
+        // Tenta identificar o modelo
+        let modelMatch = text.match(/\"product\" : \"(.*?)\"/) || text.match(/iPhone\d+,\d+/);
+        let model = modelMatch ? (modelMatch[1] || modelMatch[0]) : "iPhone Desconhecido";
+        
+        let foundErrors = [];
+        
+        errorDB.forEach(err => {
+            if (text.toLowerCase().includes(err.key.toLowerCase())) {
+                foundErrors.push(err);
+            }
+        });
+
+        if (foundErrors.length > 0) {
+            resultDiv.style.display = 'block';
+            let html = `<h3>Diagnóstico: ${model}</h3>`;
+            
+            foundErrors.forEach(e => {
+                html += `
+                    <div class="res-item">
+                        <strong style="color:var(--danger)">🔴 ${e.comp}</strong><br>
+                        <small>Código: <b>${e.key}</b></small><br>
+                        <span>${e.detail}</span>
+                    </div>
+                `;
+                saveToHistory(model, e.comp, e.key);
+            });
+            contentDiv.innerHTML = html;
+        } else {
+            alert("Nenhum erro conhecido encontrado. Verifique se copiou o log de 'panic-full' inteiro.");
+        }
+    }
+
+    function saveToHistory(model, comp, code) {
+        let history = JSON.parse(localStorage.getItem('panic_db_andre') || "[]");
+        const entry = { date: new Date().toLocaleString('pt-BR'), model, comp, code };
+        // Evita duplicados seguidos
+        if (history.length > 0 && history[0].code === code && history[0].model === model) return;
+        
+        history.unshift(entry);
+        localStorage.setItem('panic_db_andre', JSON.stringify(history.slice(0, 50))); // Salva os últimos 50
+        displayHistory();
+    }
+
+    function displayHistory() {
+        let history = JSON.parse(localStorage.getItem('panic_db_andre') || "[]");
+        document.getElementById('history-body').innerHTML = history.map(h => `
+            <tr>
+                <td>${h.date}</td>
+                <td>${h.model}</td>
+                <td>${h.comp}</td>
+                <td><b>${h.code}</b></td>
+            </tr>
+        `).join('');
+    }
+
+    function clearHistory() {
+        if(confirm("Apagar histórico de diagnósticos?")) {
+            localStorage.removeItem('panic_db_andre');
+            displayHistory();
+        }
+    }
+</script>
+
+</body>
+</html>
